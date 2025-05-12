@@ -7,7 +7,7 @@ import time
 
 
 class SeegaClient:
-    def __init__(self, host='localhost', port=5555):
+    def __init__(self, host='localhost', port=5556):
         self.host = host
         self.port = port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -76,7 +76,11 @@ class SeegaClient:
         # Botão de desistência
         self.surrender_button = tk.Button(game_frame, text="Desistir", command=self.surrender, state=tk.DISABLED)
         self.surrender_button.pack(pady=10)
-        
+
+        # Botão de passar turno
+        self.pass_button = tk.Button(game_frame, text="Passar Turno", command=self.pass_turn, state=tk.DISABLED)
+        self.pass_button.pack(pady=5)
+
         # Chat e informações (direita)
         chat_frame = tk.Frame(main_frame)
         chat_frame.pack(side=tk.RIGHT, padx=10, fill=tk.BOTH)
@@ -199,7 +203,21 @@ class SeegaClient:
         
         # Redesenhar o tabuleiro
         self.draw_board()
-    
+
+        # Habilitar botão "Passar Turno" apenas na fase de movimentação e no seu turno
+        if self.player_id == self.current_turn and self.game_state['phase'] == 'movement' and not self.game_state[
+            'game_over']:
+            self.pass_button.config(state=tk.NORMAL)
+        else:
+            self.pass_button.config(state=tk.DISABLED)
+
+    def pass_turn(self):
+        command = {
+            'type': 'pass'
+        }
+        self.socket.send(json.dumps(command).encode('utf-8'))
+        self.pass_button.config(state=tk.DISABLED)
+
     def on_canvas_click(self, event):
         if not self.game_state or self.game_state['game_over']:
             return
