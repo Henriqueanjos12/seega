@@ -1,17 +1,23 @@
 import time
 import tkinter as tk
 from tkinter import scrolledtext, messagebox, simpledialog
-from xmlrpc.client import ServerProxy
+
+import Pyro4
+
+# Configurar serialização para compatibilidade
+Pyro4.config.SERIALIZER = 'pickle'
+Pyro4.config.SERIALIZERS_ACCEPTED = {'pickle'}
 
 
-class SeegaClientRPC:
-    def __init__(self, server_url='http://localhost:8000/'):
-        self.server = ServerProxy(server_url, allow_none=True)
+class SeegaClientPyro:
+    def __init__(self):
+        # Inicializar variáveis primeiro
         self.nickname = None
         self.player_id = None
         self.game_state = None
         self.chat_messages = []
         self.selected_piece = None
+        self.server = None
 
         self.CELL_SIZE = 80
         self.BOARD_SIZE = 5
@@ -26,29 +32,65 @@ class SeegaClientRPC:
             'center': '#A0522D',
         }
 
+        # Criar interface primeiro
         self.root = tk.Tk()
-        self.root.title("Seega RPC")
+        self.root.title("Seega Pyro")
         self.root.resizable(False, False)
         self.setup_ui()
+
+        # Tentar conectar ao servidor
+        if not self.connect_to_server():
+            messagebox.showerror("Erro", "Não foi possível conectar ao servidor")
+            self.root.destroy()
+            return
 
         self.setup_connection()
         self.update_loop()
 
+    def connect_to_server(self):
+        try:
+            print("Tentando localizar Name Server em localhost:9090...")
+            ns = Pyro4.locateNS(host="localhost", port=9090, broadcast=False)
+            print("✓ Name Server encontrado")
+
+            uri = ns.lookup("seega.server")
+            print(f"✓ URI obtida: {uri}")
+
+            self.server = Pyro4.Proxy(uri)
+            self.server._pyroTimeout = 10
+
+            # Teste de conexão simples
+            _ = self.server.get_chat_messages()
+            print("✓ Conexão com o servidor OK")
+            return True
+
+        except Exception as e:
+            print(f"✗ Erro ao conectar: {e}")
+            return False
+
     def setup_connection(self):
-        self.nickname = simpledialog.askstring("Nickname", "Digite seu nome:", parent=self.root)
-        if not self.nickname:
-            self.nickname = f"Jogador{round(time.time())}"
-        self.player_id = self.server.register_client(self.nickname)
-        if self.player_id == -1:
-            messagebox.showerror("Erro", "Servidor cheio")
+        try:
+            self.nickname = simpledialog.askstring("Nickname", "Digite seu nome:", parent=self.root)
+            if not self.nickname:
+                self.nickname = f"Jogador{round(time.time())}"
+
+            self.player_id = self.server.register_client(self.nickname)
+            if self.player_id == -1:
+                messagebox.showerror("Erro", "Servidor cheio")
+                self.root.destroy()
+                return
+            else:
+                self.server.set_ready(self.player_id)
+                print(f"Cliente registrado com ID: {self.player_id}")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro de conexão: {e}")
             self.root.destroy()
-        else:
-            self.server.set_ready(self.player_id)
 
     def setup_ui(self):
         main_frame = tk.Frame(self.root)
         main_frame.pack(padx=10, pady=10)
 
+        # Frame do jogo (lado esquerdo)
         game_frame = tk.Frame(main_frame)
         game_frame.pack(side=tk.LEFT, padx=10)
 
@@ -58,16 +100,22 @@ class SeegaClientRPC:
         board_frame = tk.Frame(game_frame)
         board_frame.pack()
 
-        self.canvas = tk.Canvas(board_frame, width=self.CANVAS_SIZE, height=self.CANVAS_SIZE, bg=self.COLORS['board_bg'])
+        self.canvas = tk.Canvas(board_frame, width=self.CANVAS_SIZE, height=self.CANVAS_SIZE,
+                                bg=self.COLORS['board_bg'])
         self.canvas.pack()
         self.canvas.bind("<Button-1>", self.on_canvas_click)
 
-        self.surrender_button = tk.Button(game_frame, text="Desistir", command=self.surrender, state=tk.DISABLED)
-        self.surrender_button.pack(pady=10)
+        # Botões de controle
+        button_frame = tk.Frame(game_frame)
+        button_frame.pack(pady=10)
 
-        self.pass_button = tk.Button(game_frame, text="Passar Turno", command=self.pass_turn, state=tk.DISABLED)
-        self.pass_button.pack(pady=5)
+        self.surrender_button = tk.Button(button_frame, text="Desistir", command=self.surrender, state=tk.DISABLED)
+        self.surrender_button.pack(side=tk.LEFT, padx=5)
 
+        self.pass_button = tk.Button(button_frame, text="Passar Turno", command=self.pass_turn, state=tk.DISABLED)
+        self.pass_button.pack(side=tk.LEFT, padx=5)
+
+        # Frame do chat (lado direito)
         chat_frame = tk.Frame(main_frame)
         chat_frame.pack(side=tk.RIGHT, padx=10, fill=tk.BOTH)
 
@@ -87,6 +135,7 @@ class SeegaClientRPC:
         send_button = tk.Button(msg_frame, text="Enviar", command=self.send_chat_message)
         send_button.pack(side=tk.RIGHT, padx=2)
 
+        # Frame de informações
         info_frame = tk.LabelFrame(chat_frame, text="Informações", padx=5, pady=5)
         info_frame.pack(fill=tk.X, pady=10)
 
@@ -103,17 +152,23 @@ class SeegaClientRPC:
 
     def draw_board(self):
         self.canvas.delete("all")
+
+        # Desenhar células do tabuleiro
         for row in range(self.BOARD_SIZE):
             for col in range(self.BOARD_SIZE):
                 x1 = col * self.CELL_SIZE
                 y1 = row * self.CELL_SIZE
                 x2 = x1 + self.CELL_SIZE
                 y2 = y1 + self.CELL_SIZE
+
+                # Cor da célula
                 color = self.COLORS['cell_light'] if (row + col) % 2 == 0 else self.COLORS['cell_dark']
-                if row == 2 and col == 2:
+                if row == 2 and col == 2:  # Centro
                     color = self.COLORS['center']
+
                 self.canvas.create_rectangle(x1, y1, x2, y2, fill=color, outline="black")
 
+        # Desenhar peças se o jogo estiver iniciado
         if self.game_state:
             board = self.game_state['board']
             for row in range(self.BOARD_SIZE):
@@ -121,83 +176,109 @@ class SeegaClientRPC:
                     cell_value = board[row][col]
                     x = col * self.CELL_SIZE + self.CELL_SIZE // 2
                     y = row * self.CELL_SIZE + self.CELL_SIZE // 2
-                    if cell_value == 1:
-                        self.canvas.create_oval(x - 25, y - 25, x + 25, y + 25, fill=self.COLORS['player1'], outline="gray", width=2)
-                    elif cell_value == 2:
-                        self.canvas.create_oval(x - 25, y - 25, x + 25, y + 25, fill=self.COLORS['player2'], outline="black", width=2)
-                    elif cell_value == -1:
+
+                    if cell_value == 1:  # Jogador 1 (preto)
+                        self.canvas.create_oval(x - 25, y - 25, x + 25, y + 25,
+                                                fill=self.COLORS['player1'], outline="gray", width=2)
+                    elif cell_value == 2:  # Jogador 2 (branco)
+                        self.canvas.create_oval(x - 25, y - 25, x + 25, y + 25,
+                                                fill=self.COLORS['player2'], outline="black", width=2)
+                    elif cell_value == -1:  # Centro bloqueado
                         self.canvas.create_line(x - 20, y - 20, x + 20, y + 20, fill="red", width=3)
                         self.canvas.create_line(x + 20, y - 20, x - 20, y + 20, fill="red", width=3)
 
+            # Destacar peça selecionada
             if self.selected_piece:
                 row, col = self.selected_piece
                 x1 = col * self.CELL_SIZE
                 y1 = row * self.CELL_SIZE
                 x2 = x1 + self.CELL_SIZE
                 y2 = y1 + self.CELL_SIZE
-                self.canvas.create_rectangle(x1, y1, x2, y2, outline=self.COLORS['highlight'], width=3)
+                self.canvas.create_rectangle(x1, y1, x2, y2, outline=self.COLORS['highlight'], width=4)
 
     def update_loop(self):
         try:
-            state = self.server.get_game_state(self.player_id)
-            if state:
-                self.update_game_state(state)
-            messages = self.server.get_chat_messages()
-            for msg in messages[len(self.chat_messages):]:
-                self.chat_area.config(state=tk.NORMAL)
-                self.chat_area.insert(tk.END, f"{msg['sender']}: {msg['message']}\n")
-                self.chat_area.see(tk.END)
-                self.chat_area.config(state=tk.DISABLED)
-                self.chat_messages.append(msg)
+            if self.server and self.player_id is not None:
+                # CORREÇÃO: Remover parâmetro player_id
+                state = self.server.get_game_state()
+                if state:
+                    self.update_game_state(state)
+
+                # Atualizar mensagens do chat
+                messages = self.server.get_chat_messages()
+                new_messages = messages[len(self.chat_messages):]
+                for msg in new_messages:
+                    self.chat_area.config(state=tk.NORMAL)
+                    self.chat_area.insert(tk.END, f"{msg['sender']}: {msg['message']}\n")
+                    self.chat_area.see(tk.END)
+                    self.chat_area.config(state=tk.DISABLED)
+                    self.chat_messages.append(msg)
+
         except Exception as e:
-            print("Erro RPC:", e)
-        self.root.after(500, self.update_loop)
+            print(f"Erro no update_loop: {e}")
+
+        # Agendar próxima atualização
+        if hasattr(self, 'root') and self.root:
+            self.root.after(500, self.update_loop)
 
     def update_game_state(self, state):
         self.game_state = state
-        self.current_turn = state['current_turn']
 
+        # Atualizar informações da fase
         if state['phase'] == 'placement':
-            self.phase_label.config(text=f"Fase: Colocação de peças")
+            pieces_left_p1 = 12 - state['pieces_placed'][0]
+            pieces_left_p2 = 12 - state['pieces_placed'][1]
+            self.phase_label.config(text=f"Fase: Colocação (P1:{pieces_left_p1}, P2:{pieces_left_p2})")
         else:
-            self.phase_label.config(text=f"Fase: Movimentação")
+            self.phase_label.config(text="Fase: Movimentação")
 
+        # Atualizar status do jogo
         if self.player_id is not None:
             if state['game_over']:
                 if state['winner'] == self.player_id:
-                    self.status_label.config(text="Você venceu! 🎉")
+                    self.status_label.config(text="🎉 Você venceu!")
                 else:
-                    self.status_label.config(text="Você perdeu! 😢")
+                    self.status_label.config(text="😢 Você perdeu!")
                 self.surrender_button.config(state=tk.DISABLED)
+                self.pass_button.config(state=tk.DISABLED)
             else:
                 if state['current_turn'] == self.player_id:
-                    self.status_label.config(text="Seu turno!")
+                    self.status_label.config(text="🎯 Seu turno!")
                     self.surrender_button.config(state=tk.NORMAL)
                 else:
-                    self.status_label.config(text="Turno do oponente...")
+                    self.status_label.config(text="⏳ Turno do oponente...")
                     self.surrender_button.config(state=tk.DISABLED)
 
+        # Atualizar informações dos jogadores
         if self.player_id == 0:
-            self.player_info_label.config(text=f"Você: {self.nickname} (Preto) - Capturadas: {state['captured'][0]}")
-            self.opponent_info_label.config(text=f"Oponente (Branco) - Capturadas: {state['captured'][1]}")
+            self.player_info_label.config(
+                text=f"Você: {self.nickname} (●) - Capturadas: {state['captured'][0]}")
+            self.opponent_info_label.config(
+                text=f"Oponente (○) - Capturadas: {state['captured'][1]}")
         else:
-            self.player_info_label.config(text=f"Você: {self.nickname} (Branco) - Capturadas: {state['captured'][1]}")
-            self.opponent_info_label.config(text=f"Oponente (Preto) - Capturadas: {state['captured'][0]}")
+            self.player_info_label.config(
+                text=f"Você: {self.nickname} (○) - Capturadas: {state['captured'][1]}")
+            self.opponent_info_label.config(
+                text=f"Oponente (●) - Capturadas: {state['captured'][0]}")
 
-        self.draw_board()
-
-        if self.player_id == self.current_turn and self.game_state['phase'] == 'movement' and not self.game_state['game_over']:
+        # Botão de passar turno (só na fase de movimento)
+        if (self.player_id == state['current_turn'] and
+                state['phase'] == 'movement' and
+                not state['game_over']):
             self.pass_button.config(state=tk.NORMAL)
         else:
             self.pass_button.config(state=tk.DISABLED)
+
+        self.draw_board()
 
     def on_canvas_click(self, event):
         if not self.game_state or self.game_state['game_over']:
             return
 
-        if self.current_turn != self.player_id:
+        if self.game_state['current_turn'] != self.player_id:
             return
 
+        # Calcular posição no tabuleiro
         col = event.x // self.CELL_SIZE
         row = event.y // self.CELL_SIZE
 
@@ -205,30 +286,45 @@ class SeegaClientRPC:
             return
 
         if self.game_state['phase'] == 'placement':
-            if row == 2 and col == 2:
+            # Fase de colocação
+            if row == 2 and col == 2:  # Não pode colocar no centro
                 return
-            if self.game_state['board'][row][col] == 0:
+            if self.game_state['board'][row][col] == 0:  # Célula vazia
                 self.send_command({"type": "place", "row": row, "col": col})
 
         else:
+            # Fase de movimento
             player_piece = self.player_id + 1
-            if not self.selected_piece and self.game_state['board'][row][col] == player_piece:
-                self.selected_piece = (row, col)
-                self.draw_board()
-            elif self.selected_piece:
+
+            if not self.selected_piece:
+                # Selecionar peça própria
+                if self.game_state['board'][row][col] == player_piece:
+                    self.selected_piece = (row, col)
+                    self.draw_board()
+            else:
                 from_row, from_col = self.selected_piece
+
                 if from_row == row and from_col == col:
+                    # Desselecionar peça
                     self.selected_piece = None
                     self.draw_board()
-                elif self.game_state['board'][row][col] == 0 and (abs(from_row - row) + abs(from_col - col) == 1):
-                    self.send_command({"type": "move", "from_row": from_row, "from_col": from_col, "to_row": row, "to_col": col})
+                elif (self.game_state['board'][row][col] == 0 and
+                      abs(from_row - row) + abs(from_col - col) == 1):
+                    # Movimento válido
+                    self.send_command({
+                        "type": "move",
+                        "from_row": from_row, "from_col": from_col,
+                        "to_row": row, "to_col": col
+                    })
                     self.selected_piece = None
                 elif self.game_state['board'][row][col] == player_piece:
+                    # Selecionar outra peça própria
                     self.selected_piece = (row, col)
                     self.draw_board()
 
     def pass_turn(self):
-        self.send_command({"type": "pass"})
+        if messagebox.askyesno("Passar Turno", "Tem certeza que deseja passar o turno?"):
+            self.send_command({"type": "pass"})
 
     def surrender(self):
         if messagebox.askyesno("Desistir", "Tem certeza que deseja desistir?"):
@@ -236,22 +332,38 @@ class SeegaClientRPC:
 
     def send_command(self, command):
         try:
-            self.server.send_command(self.player_id, command)
+            if self.server:
+                response = self.server.send_command(self.player_id, command)
+                if response:
+                    self.update_game_state(response)
         except Exception as e:
-            print("Erro ao enviar comando:", e)
+            print(f"Erro ao enviar comando: {e}")
+            messagebox.showerror("Erro", f"Erro de comunicação: {e}")
 
     def send_chat_message(self):
         message = self.msg_entry.get().strip()
         if message:
             try:
-                self.server.send_chat_message(self.nickname, message)
-                self.msg_entry.delete(0, tk.END)
+                if self.server:
+                    self.server.send_chat_message(self.nickname, message)
+                    self.msg_entry.delete(0, tk.END)
             except Exception as e:
-                print("Erro ao enviar chat:", e)
+                print(f"Erro ao enviar chat: {e}")
 
     def run(self):
-        self.root.mainloop()
+        if hasattr(self, 'root') and self.root:
+            try:
+                self.root.mainloop()
+            except Exception as e:
+                print(f"Erro na interface: {e}")
+        else:
+            print("Interface não foi inicializada corretamente.")
+
 
 if __name__ == '__main__':
-    client = SeegaClientRPC()
-    client.run()
+    try:
+        client = SeegaClientPyro()
+        client.run()
+    except Exception as e:
+        print(f"Erro fatal: {e}")
+        input("Pressione Enter para sair...")
