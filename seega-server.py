@@ -11,40 +11,37 @@ import sys
 @Pyro5.api.expose
 class SeegaServer:
     """
-    Classe principal do servidor Seega utilizando Pyro5.
-    Gerencia todo o estado do jogo, as jogadas dos jogadores e as mensagens de chat.
+    Servidor principal do jogo Seega utilizando Pyro5.
+    Gerencia o estado completo do jogo, chat e lógica de jogadas.
     """
 
     def __init__(self):
-        """Inicializa o servidor com o estado inicial do jogo."""
-        self.nicknames = []  # Lista de apelidos dos jogadores conectados
-        self.lock = threading.Lock()  # Lock para garantir acesso seguro ao estado
-        self.placement_counter = 0  # Contador de peças colocadas por rodada
-        self.forced_piece = None  # Peça que deve ser movimentada após captura
-        self.chat_messages = []  # Lista de mensagens do chat
+        """Inicializa o servidor com estado inicial do jogo."""
+        self.nicknames = []
+        self.lock = threading.Lock()
+        self.placement_counter = 0
+        self.forced_piece = None
+        self.chat_messages = []
 
-        # Estado do jogo (tabuleiro, fase, turnos, capturas, etc.)
         self.game_state = {
             'board': [[0 for _ in range(5)] for _ in range(5)],
-            'phase': 'placement',  # Fase inicial: colocação de peças
+            'phase': 'placement',
             'current_turn': 0,
             'pieces_placed': [0, 0],
             'captured': [0, 0],
             'game_over': False,
-            'winner': None
+            'winner': None,
+            'update_id': 0  # Controle incremental para otimização do cliente
         }
-        self.game_state['board'][2][2] = -1  # Posição central bloqueada
+        self.game_state['board'][2][2] = -1
         print("Servidor Pyro5 inicializado")
 
     def get_nicknames(self):
-        """Retorna a lista atual de apelidos conectados."""
+        """Retorna lista de jogadores conectados."""
         return self.nicknames
 
     def register_player(self, nickname):
-        """
-        Registra um novo jogador no servidor.
-        Retorna o ID do jogador ou status 'full' caso já tenha dois conectados.
-        """
+        """Registra jogador e inicia jogo se ambos conectados."""
         with self.lock:
             if len(self.nicknames) >= 2:
                 return {'status': 'full'}
@@ -53,28 +50,45 @@ class SeegaServer:
             print(f"{nickname} conectado como jogador {player_id}")
             if len(self.nicknames) == 2:
                 self.start_game()
-            return {'status': 'ok', 'player_id': player_id}
+            return {'status': 'ok', 'player_id': player_id, 'update_id': self.game_state['update_id']}
 
     def start_game(self):
-        """Define aleatoriamente quem inicia o jogo."""
+        """Define aleatoriamente quem inicia."""
         self.game_state['current_turn'] = random.randint(0, 1)
+        self.increment_update()
         print("Jogo iniciado!")
 
+    def increment_update(self):
+        """Incrementa identificador de atualização do estado."""
+        self.game_state['update_id'] += 1
+
     def get_game_state(self):
-        """Retorna o estado completo do jogo."""
+        """Retorna estado completo (modo compatibilidade)."""
         return self.game_state
 
+    def get_game_state_if_updated(self, last_update_id):
+        """Retorna apenas se houver atualização nova."""
+        if last_update_id != self.game_state['update_id']:
+            return {'state': self.game_state, 'update_id': self.game_state['update_id']}
+        return {'state': None, 'update_id': self.game_state['update_id']}
+
     def get_chat_messages(self):
-        """Retorna todas as mensagens do chat."""
+        """Retorna todo o histórico do chat."""
         return self.chat_messages
 
+    def get_chat_messages_if_updated(self, last_count):
+        """Retorna apenas mensagens novas do chat."""
+        if len(self.chat_messages) > last_count:
+            return self.chat_messages[last_count:]
+        return []
+
     def send_chat_message(self, player_id, message):
-        """Adiciona uma nova mensagem ao chat."""
+        """Adiciona mensagem ao chat."""
         sender = self.nicknames[player_id]
         self.chat_messages.append({'sender': sender, 'message': message})
 
     def send_command(self, player_id, command):
-        """Processa comandos enviados pelo cliente."""
+        """Processa comandos enviados pelos jogadores."""
         with self.lock:
             if command['type'] == 'place':
                 self.handle_placement(player_id, command)
@@ -87,18 +101,20 @@ class SeegaServer:
             return self.game_state
 
     def handle_surrender(self, player_id):
-        """Processa desistência de um jogador."""
+        """Processa desistência."""
         self.game_state['game_over'] = True
         self.game_state['winner'] = 1 - player_id
+        self.increment_update()
 
     def handle_pass(self, player_id):
-        """Permite ao jogador passar seu turno durante a fase de movimentação."""
+        """Permite passar turno (fase de movimentação)."""
         if self.game_state['phase'] == 'movement' and self.game_state['current_turn'] == player_id:
             self.forced_piece = None
             self.game_state['current_turn'] = 1 - player_id
+            self.increment_update()
 
     def handle_placement(self, player_id, data):
-        """Processa colocação de peças durante a fase inicial."""
+        """Gerencia colocação inicial das peças."""
         row, col = data['row'], data['col']
         if self.game_state['phase'] != 'placement':
             return
@@ -114,29 +130,28 @@ class SeegaServer:
         self.game_state['pieces_placed'][player_id] += 1
         self.placement_counter += 1
 
-        total_pieces = sum(self.game_state['pieces_placed'])
-        if total_pieces == 24:
+        if sum(self.game_state['pieces_placed']) == 24:
             self.game_state['phase'] = 'movement'
-            self.game_state['board'][2][2] = 0  # Libera o centro na movimentação
+            self.game_state['board'][2][2] = 0
             self.placement_counter = 0
+            self.increment_update()
             return
 
         if self.placement_counter == 2:
             self.placement_counter = 0
             self.game_state['current_turn'] = 1 - player_id
+        self.increment_update()
 
     def handle_move(self, player_id, data):
-        """Processa movimentação de peças na fase de movimento."""
+        """Processa movimentação de peças."""
         if self.game_state['phase'] != 'movement':
             return
         from_row, from_col = data['from_row'], data['from_col']
         to_row, to_col = data['to_row'], data['to_col']
         piece = player_id + 1
 
-        if self.forced_piece:
-            if (from_row, from_col) != self.forced_piece:
-                return
-
+        if self.forced_piece and (from_row, from_col) != self.forced_piece:
+            return
         if not self.is_valid_move(from_row, from_col, to_row, to_col, piece):
             return
 
@@ -147,7 +162,6 @@ class SeegaServer:
         opponent_id = 1 - player_id
         opponent_piece = opponent_id + 1
 
-        # Verifica fim de jogo por eliminação total ou bloqueio
         if sum(row.count(opponent_piece) for row in self.game_state['board']) == 0:
             self.game_state['game_over'] = True
             self.game_state['winner'] = player_id
@@ -155,16 +169,16 @@ class SeegaServer:
             self.game_state['game_over'] = True
             self.game_state['winner'] = player_id
 
-        # Mantém o jogador caso capture, senão passa turno
         if captures > 0:
             self.game_state['captured'][player_id] += captures
             self.forced_piece = (to_row, to_col)
         else:
             self.forced_piece = None
             self.game_state['current_turn'] = opponent_id
+        self.increment_update()
 
     def is_valid_move(self, from_row, from_col, to_row, to_col, piece):
-        """Valida se a movimentação é permitida."""
+        """Valida legalidade do movimento."""
         if self.game_state['board'][from_row][from_col] != piece:
             return False
         if self.game_state['board'][to_row][to_col] != 0:
@@ -176,28 +190,25 @@ class SeegaServer:
         return True
 
     def check_captures(self, row, col, piece):
-        """Verifica e executa capturas após movimento."""
+        """Verifica capturas após movimento."""
         opponent_piece = 1 if piece == 2 else 2
         captures = 0
-        captured_positions = []
         directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
         for dr, dc in directions:
             adj_row, adj_col = row + dr, col + dc
             if 0 <= adj_row < 5 and 0 <= adj_col < 5:
                 if self.game_state['board'][adj_row][adj_col] == opponent_piece:
-                    if adj_row == 2 and adj_col == 2:
-                        continue
+                    if (adj_row, adj_col) == (2, 2):
+                        continue  # Centro não pode ser capturado
                     next_row, next_col = adj_row + dr, adj_col + dc
                     if 0 <= next_row < 5 and 0 <= next_col < 5:
                         if self.game_state['board'][next_row][next_col] == piece:
-                            captured_positions.append((adj_row, adj_col))
-        for r, c in captured_positions:
-            self.game_state['board'][r][c] = 0
-            captures += 1
+                            self.game_state['board'][adj_row][adj_col] = 0
+                            captures += 1
         return captures
 
     def has_valid_moves(self, piece):
-        """Verifica se ainda há movimentos válidos possíveis."""
+        """Verifica se o jogador ainda possui movimentos válidos."""
         for row in range(5):
             for col in range(5):
                 if self.game_state['board'][row][col] == piece:
@@ -210,15 +221,15 @@ class SeegaServer:
 
 
 def is_port_open(port):
-    """Verifica se a porta do NameServer já está ativa."""
+    """Verifica se o Name Server já está ativo."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex(("localhost", port)) == 0
 
 
 def main():
-    """Função principal para iniciar o servidor Seega com NameServer Pyro5."""
+    """Inicia o servidor Pyro5 com Name Server automático."""
     if not is_port_open(9090):
-        print("Name Server não encontrado. Iniciando um novo Name Server...")
+        print("Name Server não encontrado. Iniciando novo Name Server...")
         subprocess.Popen([sys.executable, "-m", "Pyro5.nameserver"])
         time.sleep(2)
 
@@ -227,7 +238,7 @@ def main():
     servidor = SeegaServer()
     uri = daemon.register(servidor)
     ns.register("Seega.Server", uri)
-    print("Servidor registrado no Name Server com o nome: Seega.Server")
+    print("Servidor registrado no Name Server com sucesso.")
     daemon.requestLoop()
 
 

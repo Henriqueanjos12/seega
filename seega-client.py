@@ -8,12 +8,13 @@ import Pyro5.errors
 
 class SeegaClientPyro:
     """
-    Cliente Pyro5 do jogo Seega.
-    Gerencia a interface gráfica, a comunicação com o servidor e a lógica local de jogo.
+    Cliente do jogo Seega usando Pyro5.
+    Responsável por interface gráfica (Tkinter), comunicação com o servidor, e atualização de estado.
     """
 
     def __init__(self):
-        """Inicializa a interface e conecta ao servidor."""
+        """Inicializa o cliente, interface gráfica e conecta ao servidor."""
+        # Componentes de interface gráfica
         self.opponent_score_label = None
         self.chat_area = None
         self.msg_entry = None
@@ -23,6 +24,8 @@ class SeegaClientPyro:
         self.surrender_button = None
         self.status_label = None
         self.canvas = None
+
+        # Controle de estado de jogo e comunicação
         self.server = None
         self.player_id = None
         self.nickname = None
@@ -31,9 +34,10 @@ class SeegaClientPyro:
         self.game_state = None
         self.chat_messages = []
         self.popup_shown = False
-        self.last_update_id = 0  # Controle incremental de atualização de estado
-        self.last_chat_count = 0  # Controle incremental de atualização do chat
+        self.last_update_id = 0  # Controle incremental de atualização do estado
+        self.last_chat_count = 0  # Controle incremental do chat
 
+        # Parâmetros de tabuleiro
         self.CELL_SIZE = 80
         self.BOARD_SIZE = 5
         self.CANVAS_SIZE = self.CELL_SIZE * self.BOARD_SIZE
@@ -51,12 +55,12 @@ class SeegaClientPyro:
         self.root.title("Seega Pyro5")
         self.root.resizable(False, False)
         self.setup_ui()
-        self.connect_to_server()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.connect_to_server()
         self.update_loop()
 
     def connect_to_server(self):
-        """Conecta ao servidor Pyro5 e registra o jogador."""
+        """Localiza o Name Server Pyro5 e registra o jogador."""
         try:
             ns = Pyro5.api.locate_ns()
             uri = ns.lookup("Seega.Server")
@@ -80,11 +84,11 @@ class SeegaClientPyro:
             self.root.destroy()
 
     def setup_ui(self):
-        """Configura a interface gráfica principal do jogo."""
+        """Constrói toda interface gráfica com Tkinter."""
         main_frame = tk.Frame(self.root)
         main_frame.pack(padx=10, pady=10)
 
-        # Área do tabuleiro
+        # Área de jogo (lado esquerdo)
         game_frame = tk.Frame(main_frame)
         game_frame.pack(side="left", padx=10)
 
@@ -94,8 +98,9 @@ class SeegaClientPyro:
         board_frame = tk.Frame(game_frame)
         board_frame.pack()
 
-        self.canvas = tk.Canvas(board_frame, width=self.CANVAS_SIZE, height=self.CANVAS_SIZE,
-                                bg=self.COLORS['board_bg'])
+        self.canvas = tk.Canvas(
+            board_frame, width=self.CANVAS_SIZE, height=self.CANVAS_SIZE, bg=self.COLORS['board_bg']
+        )
         self.canvas.pack()
         self.canvas.bind("<Button-1>", self.on_canvas_click)
 
@@ -105,7 +110,7 @@ class SeegaClientPyro:
         self.pass_button = tk.Button(game_frame, text="Passar Turno", command=self.pass_turn, state="disabled")
         self.pass_button.pack(pady=5)
 
-        # Área de chat e placar
+        # Área lateral (chat + placar)
         chat_frame = tk.Frame(main_frame)
         chat_frame.pack(side="right", padx=10, fill="both")
 
@@ -113,8 +118,9 @@ class SeegaClientPyro:
         chat_label.pack(pady=5, padx=5)
 
         chat_bg_color = "#444444"
-        self.chat_area = scrolledtext.ScrolledText(chat_frame, width=30, height=15, wrap=tk.WORD, state=tk.DISABLED,
-                                                   font=("Arial", 11), bg=chat_bg_color)
+        self.chat_area = scrolledtext.ScrolledText(
+            chat_frame, width=30, height=15, wrap=tk.WORD, state=tk.DISABLED, font=("Arial", 11), bg=chat_bg_color
+        )
         self.chat_area.pack(pady=5)
 
         msg_frame = tk.Frame(chat_frame)
@@ -134,16 +140,20 @@ class SeegaClientPyro:
         self.score_frame = tk.Frame(chat_frame, bg=score_bg_color, relief="groove", bd=2)
         self.score_frame.pack(pady=10, fill="x")
 
-        self.your_score_label = tk.Label(self.score_frame, text="", font=("Arial", 12, "bold"), bg=score_bg_color)
+        self.your_score_label = tk.Label(
+            self.score_frame, text="", font=("Arial", 12, "bold"), bg=score_bg_color
+        )
         self.your_score_label.pack(anchor="w", pady=2, padx=5)
 
-        self.opponent_score_label = tk.Label(self.score_frame, text="", font=("Arial", 12, "bold"), bg=score_bg_color)
+        self.opponent_score_label = tk.Label(
+            self.score_frame, text="", font=("Arial", 12, "bold"), bg=score_bg_color
+        )
         self.opponent_score_label.pack(anchor="w", pady=2, padx=5)
 
         self.draw_board()
 
     def draw_board(self):
-        """Redesenha o tabuleiro completo."""
+        """Desenha o tabuleiro com as peças e destaques."""
         self.canvas.delete("all")
         for row in range(self.BOARD_SIZE):
             for col in range(self.BOARD_SIZE):
@@ -159,7 +169,7 @@ class SeegaClientPyro:
             for row in range(self.BOARD_SIZE):
                 for col in range(self.BOARD_SIZE):
                     cell = board[row][col]
-                    x, y = col * self.CELL_SIZE + self.CELL_SIZE // 2, row * self.CELL_SIZE // 2 + self.CELL_SIZE // 2
+                    x, y = col * self.CELL_SIZE + self.CELL_SIZE // 2, row * self.CELL_SIZE + self.CELL_SIZE // 2
                     if cell == 1:
                         self.canvas.create_oval(x - 25, y - 25, x + 25, y + 25, fill=self.COLORS['player1'],
                                                 outline="gray", width=2)
@@ -177,7 +187,7 @@ class SeegaClientPyro:
                 self.canvas.create_rectangle(x1, y1, x2, y2, outline=self.COLORS['highlight'], width=3)
 
     def update_loop(self):
-        """Loop de atualização periódica do estado e do chat."""
+        """Loop de atualização contínua (estado e chat)."""
         try:
             self.check_for_game_updates()
             self.check_for_new_chat()
@@ -186,7 +196,7 @@ class SeegaClientPyro:
         self.root.after(500, self.update_loop)
 
     def check_for_game_updates(self):
-        """Verifica se houve atualização do estado do jogo."""
+        """Verifica se o servidor tem novo estado do jogo."""
         result = self.server.get_game_state_if_updated(self.last_update_id)
         if result['state']:
             self.game_state = result['state']
@@ -194,7 +204,7 @@ class SeegaClientPyro:
             self.update_game_state()
 
     def check_for_new_chat(self):
-        """Busca apenas novas mensagens do chat."""
+        """Busca novas mensagens de chat."""
         new_msgs = self.server.get_chat_messages_if_updated(self.last_chat_count)
         if new_msgs:
             for msg in new_msgs:
@@ -202,10 +212,9 @@ class SeegaClientPyro:
             self.last_chat_count += len(new_msgs)
 
     def update_game_state(self):
-        """Atualiza interface com novo estado do jogo."""
+        """Atualiza toda a interface de acordo com o novo estado do jogo."""
         state = self.game_state
         self.current_turn = state['current_turn']
-
         phase_text = "Colocação de Peças" if state['phase'] == 'placement' else "Movimentação"
         self.status_label.config(text=f"Fase: {phase_text}")
 
@@ -247,7 +256,7 @@ class SeegaClientPyro:
         self.draw_board()
 
     def on_canvas_click(self, event):
-        """Lida com cliques do jogador no tabuleiro."""
+        """Gerencia o clique do jogador no tabuleiro."""
         if not self.game_state or self.game_state['game_over']:
             return
         if self.current_turn != self.player_id:
@@ -286,14 +295,14 @@ class SeegaClientPyro:
                     self.draw_board()
 
     def send_chat_message(self):
-        """Envia mensagem de chat ao servidor."""
+        """Envia mensagem de chat."""
         message = self.msg_entry.get().strip()
         if message:
             self.server.send_chat_message(self.player_id, message)
             self.msg_entry.delete(0, tk.END)
 
     def add_chat_message(self, sender, message):
-        """Adiciona mensagem na interface do chat."""
+        """Adiciona mensagem recebida no chat da interface."""
         self.chat_area.config(state=tk.NORMAL)
         nicknames = self.server.get_nicknames()
         color = "yellow"
@@ -307,7 +316,7 @@ class SeegaClientPyro:
         self.chat_area.config(state=tk.DISABLED)
 
     def add_system_message(self, message):
-        """Adiciona mensagem do sistema no chat."""
+        """Adiciona mensagem de sistema ao chat."""
         self.chat_area.config(state=tk.NORMAL)
         self.chat_area.tag_config("SISTEMA", foreground="yellow")
         self.chat_area.insert(tk.END, f"SISTEMA: {message}\n", "SISTEMA")
@@ -315,11 +324,11 @@ class SeegaClientPyro:
         self.chat_area.config(state=tk.DISABLED)
 
     def pass_turn(self):
-        """Envia comando de passar turno."""
+        """Solicita passagem de turno."""
         self.server.send_command(self.player_id, {'type': 'pass'})
 
     def surrender(self):
-        """Envia comando de desistência."""
+        """Solicita desistência."""
         if messagebox.askyesno("Desistir", "Tem certeza que deseja desistir?"):
             self.server.send_command(self.player_id, {'type': 'surrender'})
 
@@ -334,7 +343,7 @@ class SeegaClientPyro:
             self.root.destroy()
 
     def run(self):
-        """Inicia o loop principal da interface."""
+        """Inicia o loop principal do Tkinter."""
         self.root.mainloop()
 
 
